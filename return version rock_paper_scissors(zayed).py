@@ -1,8 +1,5 @@
 import random
 def play():
-	user = input("'r' for rock, 'p' for paper, 's' for scissors =>  ")
-	computer = random.choice(['r', 'p', 's'])
-	print("Computer\'s choice is :", computer)
 	computer = random.choice(["r", "p", "s"])
 	user = input("'r' for rock, 'p' for paper, 's' for scissors => ")
 	print("Computer\'s choice is :", computer)
