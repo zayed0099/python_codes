@@ -1,0 +1,65 @@
+[
+    {
+        "id": 1,
+        "title": "Lost in Translation",
+        "year": 2003,
+        "genre": "Drama",
+        "director": "Sofia Coppola",
+        "actor": "Bill Murray",
+        "imdb_rating": 7.7
+    },
+    {
+        "id": 2,
+        "title": "The TEST",
+        "year": 1010,
+        "genre": "Drama",
+        "director": "Frank Darabont",
+        "actor": "Tom Hanks",
+        "imdb_rating": 10.0
+    },
+    {
+        "id": 6,
+        "title": "Spirited Away",
+        "year": 2001,
+        "genre": "Animation",
+        "director": "Hayao Miyazaki",
+        "actor": "Rumi Hiiragi",
+        "imdb_rating": 8.6
+    },
+    {
+        "id": 7,
+        "title": "Parasite",
+        "year": 2019,
+        "genre": "Comedy",
+        "director": "Bong Joon-ho",
+        "actor": "Song Kang-ho",
+        "imdb_rating": 8.5
+    },
+    {
+        "id": 8,
+        "title": "The Dark Knight",
+        "year": 2008,
+        "genre": "Action",
+        "director": "Christopher Nolan",
+        "actor": "Christian Bale",
+        "imdb_rating": 9.0
+    },
+    {
+        "id": 9,
+        "title": "Pulp Fiction",
+        "year": 1994,
+        "genre": "Crime",
+        "director": "Quentin Tarantino",
+        "actor": "John Travolta",
+        "imdb_rating": 8.9
+    },
+    {
+        "id": 10,
+        "title": "Forrest Gump",
+        "year": 1994,
+        "genre": "Drama",
+        "director": "Robert Zemeckis",
+        "actor": "Tom Hanks",
+        "imdb_rating": 8.8
+    }
+]
