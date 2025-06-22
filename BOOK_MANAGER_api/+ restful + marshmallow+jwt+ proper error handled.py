@@ -3,11 +3,12 @@ from flask import Flask, request, jsonify, abort
 from flask_restful import Resource, Api
 from flask_sqlalchemy import SQLAlchemy
 from marshmallow import Schema, fields, validate
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager, create_refresh_token
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import BadRequest
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from datetime import timedelta
 
 app = Flask(__name__)
 api = Api(app)
@@ -18,6 +19,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'ap
 db = SQLAlchemy(app)
 
 app.config["JWT_SECRET_KEY"] = "super-secret"
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
+app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(days=30)
 jwt = JWTManager(app)
 
 # User class
@@ -121,9 +124,18 @@ class Login(Resource):
             else:
                 if check_user and check_password_hash(check_user.password , pass_txt_login):
                     access_token = create_access_token(identity=check_user.id)
-                    return {"access_token": access_token}, 200        
+                    refresh_token = create_refresh_token(identity=check_user.id)
+                    return {"access_token": access_token, "refresh_token": refresh_token}, 200        
                 else:
                     return {"message": "Bad username or password. Login unsuccessful"}, 401
+
+# JWT protected class to only get access token using the refresh token
+class Ref_Token(Resource):
+    @jwt_required(refresh=True)
+    def post(self):
+        identity = get_jwt_identity()
+        access_token = create_access_token(identity=identity)
+        return {"access_token" : access_token}
 
 # JWT protected class to only get all books and add new books
 class Book_CR(Resource):
@@ -265,8 +277,8 @@ class Book_RUD(Resource):
 api.add_resource(Book_CR, '/api/v1/books/', endpoint='view')  # For Create & Read (all)
 api.add_resource(Book_RUD, '/api/v1/books/<int:id>', endpoint='edit_delete')  # For Read (one), Update, Delete
 api.add_resource(AddUser, '/api/v1/signin', endpoint='signin')
-api.add_resource(Login, '/api/v1/login')
-
+api.add_resource(Login, '/api/v1/login', endpoint='login')
+api.add_resource(Ref_Token, '/api/v1/refresh', endpoint='ref_token')
 
 if __name__ == "__main__":
     app.run(debug=True)
