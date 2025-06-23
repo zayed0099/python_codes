@@ -3,25 +3,40 @@ from flask import Flask, request, jsonify, abort
 from flask_restful import Resource, Api
 from flask_sqlalchemy import SQLAlchemy
 from marshmallow import Schema, fields, validate
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager, create_refresh_token
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager, create_refresh_token, verify_jwt_in_request
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.exceptions import BadRequest
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from datetime import timedelta
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 api = Api(app)
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'app.db')
-
 db = SQLAlchemy(app)
 
 app.config["JWT_SECRET_KEY"] = "super-secret"
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
 app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(days=30)
 jwt = JWTManager(app)
+
+def get_user_identifier():
+    try:
+        verify_jwt_in_request(optional=True)
+        return str(get_jwt_identity() or get_remote_address())
+    except Exception:
+        return get_remote_address()
+
+limiter = Limiter(
+    key_func = get_user_identifier,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",    
+    )
 
 # User class
 class User(db.Model):
@@ -58,23 +73,32 @@ class UserSchema(Schema):
 
 book_schema = BookSchema() # for a single book
 books_schema = BookSchema(many=True) # for multiple books
-
 user_schema = UserSchema(many=False)
+
+class CustomBadrequest(BadRequest):
+    def __init__(self, message):
+        self.description = message
+        super().__init__()
+
+@app.errorhandler(CustomBadrequest)
+def no_data_error(err):
+    return {"message": err.description}, 400
 
 # User sign-up class
 class AddUser(Resource):
+    @limiter.limit("3 per day")
     def post(self):
         try:
             data = request.get_json()
             if data is None:
-                return {"message": "Missing JSON in request"}, 400
+                raise CustomBadRequest("Missing JSON in request.")
         except BadRequest:
-            return {"message": "Invalid JSON data"}, 400
+            raise CustomBadRequest("Invalid JSON format.")
 
         errors = user_schema.validate(data)
 
         if errors:
-            return {"validation_errors": errors}, 400
+            raise CustomBadRequest("Validation failed: " + str(errors))
 
         else:
             username_signin = data.get("username")
@@ -83,7 +107,7 @@ class AddUser(Resource):
             check_user = User.query.filter(User.username == username_signin).first()
 
             if check_user:
-                return {"error": "Username already taken."}, 400
+                raise CustomBadRequest("Username already taken.")
             else:
                 new_hashed_pw_signin = generate_password_hash(pass_txt_signin)
 
@@ -99,18 +123,19 @@ class AddUser(Resource):
 
 # User login class
 class Login(Resource):
+    @limiter.limit("3 per day")
     def post(self):
         try:
             data = request.get_json()
             if data is None:
-                return {"message": "Missing JSON in request"}, 400
+                raise CustomBadRequest("Missing JSON in request.")
         except BadRequest:
-            return {"message": "Invalid JSON data"}, 400
+            raise CustomBadRequest("Invalid JSON format.")
 
         errors = user_schema.validate(data)
 
         if errors:
-            return {"validation_errors": errors}, 400
+            raise CustomBadRequest("Validation failed: " + str(errors))
 
         else:
             username_for_login = data.get("username")
@@ -131,6 +156,7 @@ class Login(Resource):
 
 # JWT protected class to only get access token using the refresh token
 class Ref_Token(Resource):
+    @limiter.limit("5 per day")
     @jwt_required(refresh=True)
     def post(self):
         identity = get_jwt_identity()
@@ -149,30 +175,18 @@ class Book_CR(Resource):
 
         current_user_id = get_jwt_identity()
         
-        # if user searches by both title and author
+        filters = [book_manager.user_id == current_user_id]
+
         if title and author:
-            pagination = book_manager.query.filter(
-                book_manager.user_id == current_user_id,
-                book_manager.normalized_title == title,
-                book_manager.author == author
-                ).paginate(page=page, per_page=per_page, error_out=False)
-        # only by title
-        elif title:
-            pagination = book_manager.query.filter(
-                book_manager.user_id == current_user_id,
-                book_manager.normalized_title == title
-                ).paginate(page=page, per_page=per_page, error_out=False)
-        # only bu author
+            filters.append(book_manager.normalized_title == title)
+            filters.append(book_manager.author == author)
         elif author:
-            pagination = book_manager.query.filter(
-                book_manager.user_id == current_user_id,
-                book_manager.author == author
-                ).paginate(page=page, per_page=per_page, error_out=False)
-        # w/o any filter. shows all books paginated 
-        else:
-            pagination = book_manager.query.filter(
-                book_manager.user_id == current_user_id
-                ).paginate(page=page, per_page=per_page, error_out=False)
+            filters.append(book_manager.author == author)
+        elif title:
+            filters.append(book_manager.normalized_title == title)
+        
+        pagination = book_manager.query.filter(*filters).paginate(
+            page=page, per_page=per_page, error_out=False)
 
         if not pagination.items:
             return {"message": "No books found"}, 404
@@ -188,18 +202,19 @@ class Book_CR(Resource):
             'total_pages': pagination.pages
             }, 200
 
+    @limiter.limit("50 per day")
     def post(self):
         try:
             data = request.get_json()
             if data is None:
-                return {"message": "Missing JSON in request"}, 400
+                raise CustomBadRequest("Missing JSON in request.")
         except BadRequest:
-            return {"message": "Invalid JSON data"}, 400
+            raise CustomBadRequest("Invalid JSON format.")
         
         errors = book_schema.validate(data)
 
         if errors:
-            return {"validation_errors": errors}, 400
+            raise CustomBadRequest("Validation failed: " + str(errors))
 
         else:
             title = data.get("title")
@@ -228,19 +243,20 @@ class Book_RUD(Resource):
         else:
             return (book_schema.dump(book_to_work)), 200
 
+    @limiter.limit("50 per day")
     def put(self, id):
         try:
             data = request.get_json()
             if data is None:
-                return {"message": "Missing JSON in request"}, 400
+                raise CustomBadRequest("Missing JSON in request.")
         except BadRequest:
-            return {"message": "Invalid JSON data"}, 400
+            raise CustomBadRequest("Invalid JSON format.")
         
         errors = book_schema.validate(data)
 
         if errors:
-            return {"validation_errors": errors}, 400
-
+            raise CustomBadRequest("Validation failed: " + str(errors))
+            
         else:
             current_user_id = get_jwt_identity()
             
@@ -257,7 +273,8 @@ class Book_RUD(Resource):
             except (SQLAlchemyError, DBAPIError):
                 db.session.rollback()
                 return {"error": "Failed to save entry to database"}, 500
-
+    
+    @limiter.limit("50 per day")
     def delete(self, id):
         current_user_id = get_jwt_identity()
             
