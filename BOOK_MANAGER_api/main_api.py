@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify, abort
 from flask_restful import Resource, Api
 from flask_sqlalchemy import SQLAlchemy
@@ -11,14 +12,16 @@ from datetime import timedelta, datetime, timezone
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+load_dotenv()
 app = Flask(__name__)
 api = Api(app)
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY')
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'app.db')
 db = SQLAlchemy(app)
 
-app.config["JWT_SECRET_KEY"] = "super-secret"
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY')
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
 app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(days=30)
 jwt = JWTManager(app)
@@ -37,6 +40,8 @@ limiter = Limiter(
     storage_uri="memory://",    
     )
 
+limiter.enabled = False
+
 # User class
 class User(db.Model):
     __tablename__ = 'user_db'
@@ -44,6 +49,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(200), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
+    joined = db.Column(db.DateTime, nullable=False)
 
     books = db.relationship('book_manager', backref='user', lazy=True)
 
@@ -64,7 +70,9 @@ class book_manager(db.Model):
 class jwt_blacklist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     jti = db.Column(db.String(300), nullable=False) # jti → Stands for JWT ID
+    ttype = db.Column(db.String(16), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False)   
+    user_id_jwt = db.Column(db.Integer, nullable=False)
 
 with app.app_context():
     db.create_all()
@@ -133,6 +141,8 @@ class AddUser(Resource):
             username_signin = data.get("username")
             pass_txt_signin = data.get("password")
 
+            now = datetime.now(timezone.utc)
+
             check_user = User.query.filter(User.username == username_signin).first()
 
             if check_user:
@@ -140,7 +150,7 @@ class AddUser(Resource):
             else:
                 new_hashed_pw_signin = generate_password_hash(pass_txt_signin)
 
-                new_user = User(username=username_signin, password=new_hashed_pw_signin)
+                new_user = User(username=username_signin, password=new_hashed_pw_signin, joined=now)
 
                 try:
                     db.session.add(new_user)
@@ -196,12 +206,16 @@ class Del_Token(Resource):
     @limiter.limit("10 per day")
     @jwt_required()
     def delete(self):
-        jti = get_jwt()['jti']
+        user_id_jwt = get_jwt_identity()
+        token = get_jwt()
+        jti = token['jti']
+        ttype = token["type"]
         now = datetime.now(timezone.utc)
         try:
-            db.session.add(jwt_blacklist(jti=jti, created_at=now))
+            new_re = jwt_blacklist(jti=jti, ttype=ttype, created_at=now, user_id_jwt=user_id_jwt)
+            db.session.add(new_re)
             db.session.commit()
-            return {'message' : 'JWT token revoked.'}
+            return {'message': f'{ttype.capitalize()}: JWT token revoked.'}
         except SQLAlchemyError as e:
             db.session.rollback()
             raise e
@@ -346,3 +360,4 @@ api.add_resource(Del_Token, '/api/v1/logout', endpoint='logout')
 
 if __name__ == "__main__":
     app.run(debug=True)
+
