@@ -59,7 +59,8 @@ class book_manager(db.Model):
     title = db.Column(db.String(200), unique=True, nullable=False)
     author = db.Column(db.String(200), nullable=False)
     normalized_title = db.Column(db.String(200), nullable=False, index=True)
-
+    is_deleted = db.Column(db.Boolean, default=False, nullable=False)
+    
     user_id = db.Column(db.Integer, db.ForeignKey('user_db.id'), nullable=False)
 
     __table_args__ = (
@@ -199,8 +200,22 @@ class Ref_Token(Resource):
     @jwt_required(refresh=True)
     def post(self):
         identity = get_jwt_identity()
+        token = get_jwt()
+        jti = token['jti']
+        ttype = token["type"]
+        now = datetime.now(timezone.utc)
+    
+        try:
+            new_refresh_revoke = jwt_blacklist(jti=jti, ttype=ttype, created_at=now, user_id_jwt=identity)
+            db.session.add(new_refresh_revoke)
+            db.session.commit()
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            raise e
+
         access_token = create_access_token(identity=identity)
-        return {"access_token" : access_token}
+        refresh_token = create_refresh_token(identity=identity)
+        return {"access_token" : access_token, "refresh_token" : refresh_token}
 
 class Del_Token(Resource):
     @limiter.limit("10 per day")
@@ -234,7 +249,7 @@ class Book_CR(Resource):
 
         current_user_id = get_jwt_identity()
         
-        filters = [book_manager.user_id == current_user_id]
+        filters = [book_manager.user_id == current_user_id, book_manager.is_deleted == False]
 
         if title and author:
             filters.append(book_manager.normalized_title == title)
@@ -281,21 +296,42 @@ class Book_CR(Resource):
 
             normalized_title = title.lower().strip()
 
-            new_book = book_manager(title=title, author=author, normalized_title=normalized_title, user_id=get_jwt_identity())
-            try:
-                db.session.add(new_book)
-                db.session.commit()
-                return book_schema.dump(new_book), 201
-            except SQLAlchemyError as e:
-                db.session.rollback()
-                raise e
+            del_check = book_manager.query.filter_by(
+                user_id=current_user_id
+                , is_deleted=True
+                , normalized_title=normalized_title).first() 
             
+            if not del_check:
+                new_book = book_manager(
+                    title=title,
+                    author=author,
+                    normalized_title=normalized_title,
+                    user_id=get_jwt_identity(),
+                    is_deleted=False
+                )
+
+                try:
+                    db.session.add(new_book)
+                    db.session.commit()
+                    return book_schema.dump(new_book), 201
+                except SQLAlchemyError as e:
+                    db.session.rollback()
+                    raise e
+            else:
+                del_check.is_deleted = False
+                try:
+                    db.session.commit()
+                    return {'message' : f"({del_check.title}) is added to the list."}
+                except SQLAlchemyError as e:
+                    db.session.rollback()
+                    raise e
+
 # JWT protected class to update, delete and get book by id.
 class Book_RUD(Resource):
     method_decorators = [jwt_required()]
     def get(self, id):
         current_user_id = get_jwt_identity()
-        book_to_work = book_manager.query.filter_by(user_id=current_user_id, id=id).first()        
+        book_to_work = book_manager.query.filter_by(user_id=current_user_id, id=id, is_deleted = False).first()        
         
         if not book_to_work:
             abort(404, description="Book not found.")
@@ -319,7 +355,7 @@ class Book_RUD(Resource):
         else:
             current_user_id = get_jwt_identity()
             
-            book_to_work = book_manager.query.filter_by(user_id=current_user_id, id=id).first()
+            book_to_work = book_manager.query.filter_by(user_id=current_user_id, id=id, is_deleted = False).first()
             
             if not book_to_work:
                 abort(404, description="Book not found.")
@@ -337,12 +373,12 @@ class Book_RUD(Resource):
     def delete(self, id):
         current_user_id = get_jwt_identity()
             
-        book_to_work = book_manager.query.filter_by(user_id=current_user_id, id=id).first()
-        if not book_to_work:
+        book_tw = book_manager.query.filter_by(user_id=current_user_id, id=id).first()
+        if not book_tw:
             abort(404, description="Book not found.")
 
         try:    
-            db.session.delete(book_to_work)
+            book_tw.is_deleted = True
             db.session.commit()
             return {"message" : "Deleted Successfully"}, 200
         except SQLAlchemyError as e:
@@ -360,4 +396,3 @@ api.add_resource(Del_Token, '/api/v1/logout', endpoint='logout')
 
 if __name__ == "__main__":
     app.run(debug=True)
-
