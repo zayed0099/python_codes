@@ -76,7 +76,7 @@ def show_by_id(id):
 @app.route("/movies/view/<string:imdbid>")
 def search_omdb(imdbid):
     try:    
-        url = f"https://www.omdbapi.com/?i={imdbid}&apikey=7a7e87e3"
+        url = f"https://www.omdbapi.com/?i={imdbid}&apikey=7gee87e3"
         response = requests.get(url)
 
         data = response.json()
